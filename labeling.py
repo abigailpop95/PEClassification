@@ -3,58 +3,44 @@ import pandas as pd
 # Load CSV
 df = pd.read_csv('pose_data.csv')
 
-# Function to label data (lying down = injured, based on multiple body keypoints)
+# Function to dynamically check which points exist in the dataset
 def label_data(row):
-    # Extract y-coordinates for key body landmarks
-    # Left and right shoulders (landmarks 11, 12)
-    left_shoulder_y = row['y11']
-    right_shoulder_y = row['y12']
+    # Find which 'x' coordinates are present in the dataset
+    detected_points = [col for col in row.index if col.startswith('x')]
+    num_detected_points = sum(~pd.isna(row[detected_points]))  # Count how many landmarks have non-NaN values
 
-    # Left and right hips (landmarks 23, 24)
-    left_hip_y = row['y23']
-    right_hip_y = row['y24']
-
-    # Left and right knees (landmarks 25, 26)
-    left_knee_y = row['y25']
-    right_knee_y = row['y26']
-
-    # Left and right ankles (landmarks 27, 28)
-    left_ankle_y = row['y27']
-    right_ankle_y = row['y28']
-
-    # Calculate average y-coordinate for the shoulders, hips, knees, and ankles
-    avg_shoulder_y = (left_shoulder_y + right_shoulder_y) / 2
-    avg_hip_y = (left_hip_y + right_hip_y) / 2
-    avg_knee_y = (left_knee_y + right_knee_y) / 2
-    avg_ankle_y = (left_ankle_y + right_ankle_y) / 2
-
-    # Check if the y-coordinates are aligned, indicating a lying down posture
-    threshold = 0.1  # Adjust this threshold as needed based on the scale of y-coordinates
-
-    # Check for 'Injured' (lying down)
-    if (
-        abs(avg_shoulder_y - avg_hip_y) < threshold and
-        abs(avg_hip_y - avg_knee_y) < threshold and
-        abs(avg_knee_y - avg_ankle_y) < threshold
-    ):
-        return 'Injured'
-
-    # Check for 'Not Injured' (standing or sitting, based on large differences in y-coordinates)
-    elif (
-        abs(avg_shoulder_y - avg_hip_y) > threshold * 1.5 or
-        abs(avg_hip_y - avg_knee_y) > threshold * 1.5 or
-        abs(avg_knee_y - avg_ankle_y) > threshold * 1.5
-    ):
-        return 'Not Injured'
-
-    # If the posture doesn't fit either case, label it as 'Unknown'
-    else:
+    # First check: label as "unknown" if fewer than 25 points are detected
+    if num_detected_points < 25:
         return 'Unknown'
+
+    # Check if shoulder and hip z-coordinates exist (adjust based on your dataset structure)
+    if {'z11', 'z12', 'z23', 'z24'}.issubset(row.index):
+        # Extract z-coordinates for the hips and shoulders
+        left_shoulder_z = row['z11']
+        right_shoulder_z = row['z12']
+        left_hip_z = row['z23']
+        right_hip_z = row['z24']
+
+        # Calculate average z-coordinates for shoulders and hips
+        avg_shoulder_z = (left_shoulder_z + right_shoulder_z) / 2
+        avg_hip_z = (left_hip_z + right_hip_z) / 2
+
+        # Define a threshold for checking if the person is lying down
+        z_threshold = 0.1  # Adjust this threshold based on the scale of z-values in your dataset
+
+        # Second check: label as "badly injured" if z-coordinates of shoulders and hips are close
+        if abs(avg_shoulder_z - avg_hip_z) < z_threshold:
+            return 'Badly Injured'
+        else:
+            return 'Not Injured or Slightly Injured'
+    
+    # Default label if none of the conditions are met
+    return 'Unknown'
 
 # Apply labeling function to each row
 df['label'] = df.apply(label_data, axis=1)
 
-# Save the labeled dataset for further training
+# Save the labeled dataset for further analysis
 df.to_csv('labeled_pose_data.csv', index=False)
 
 print("Labeled dataset saved to 'labeled_pose_data.csv'.")
