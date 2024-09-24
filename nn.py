@@ -44,6 +44,13 @@ test_dataset = TensorDataset(X_test_tensor, y_test_tensor)
 train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
 test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False)
 
+# EXTRA STEP: RECORDING RESULTS FOR THE TEST VALUES
+test_data_df = pd.DataFrame(X_test, columns=data.columns[:-1])  # Use original feature names
+test_data_df['label'] = label_encoder.inverse_transform(y_test)  # Add the original labels
+
+# Save the test data with labels to a new CSV file
+test_data_df.to_csv('REZ.csv', index=False)
+
 # Step 4: Define the neural network architecture
 class PoseEstimationNN(nn.Module):
     def __init__(self, input_size, hidden_size, output_size):
