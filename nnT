@@ -1,0 +1,187 @@
+import numpy as np
+import pandas as pd
+import tensorflow as tf
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import confusion_matrix, classification_report, f1_score, precision_score, recall_score
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# Load and preprocess the dataset
+def load_data(file_path):
+    data = pd.read_csv(file_path)
+    X = data.drop(columns=['filename', 'label'])  # Assuming 'filename' and 'label' columns exist
+    y = data['label']  # Labels: 'injured', 'not injured', 'unknown'
+
+    # If there are less than 25 points, classify as unknown
+    X['point_count'] = X.count(axis=1)
+    y[X['point_count'] < 25] = 'unknown'
+    X = X.drop(columns=['point_count'])
+    
+    # Convert labels to one-hot encoding
+    y = pd.get_dummies(y, columns=['label'])
+    
+    # Print class distribution
+    print("Class distribution:")
+    print(data['label'].value_counts())
+
+    return X.values, y.values
+
+# Build a neural network model
+def build_model(input_shape, optimizer):
+    model = tf.keras.Sequential()
+    model.add(tf.keras.layers.InputLayer(input_shape=input_shape))
+    
+    # 7 hidden layers
+    for _ in range(7):
+        model.add(tf.keras.layers.Dense(128, activation='relu'))
+        model.add(tf.keras.layers.Dropout(0.5))  # Dropout for regularization
+    
+    # Output layer
+    model.add(tf.keras.layers.Dense(3, activation='softmax'))  # 3 output classes
+
+    model.compile(
+        optimizer=optimizer,
+        loss='categorical_crossentropy',
+        metrics=['accuracy']
+    )
+    return model
+
+# Plot comparison between two optimizers
+def plot_comparison(history_sgd, history_adam):
+    epochs = range(1, 17)
+
+    # Accuracy comparison
+    plt.figure(figsize=(10, 5))
+    plt.plot(epochs, history_sgd.history['accuracy'], label='SGD Training Accuracy')
+    plt.plot(epochs, history_sgd.history['val_accuracy'], label='SGD Validation Accuracy')
+    plt.plot(epochs, history_adam.history['accuracy'], label='Adam Training Accuracy')
+    plt.plot(epochs, history_adam.history['val_accuracy'], label='Adam Validation Accuracy')
+    plt.title('Optimizer Comparison: Accuracy')
+    plt.xlabel('Epochs')
+    plt.ylabel('Accuracy')
+    plt.legend()
+    plt.show()
+
+    # Loss comparison
+    plt.figure(figsize=(10, 5))
+    plt.plot(epochs, history_sgd.history['loss'], label='SGD Training Loss')
+    plt.plot(epochs, history_sgd.history['val_loss'], label='SGD Validation Loss')
+    plt.plot(epochs, history_adam.history['loss'], label='Adam Training Loss')
+    plt.plot(epochs, history_adam.history['val_loss'], label='Adam Validation Loss')
+    plt.title('Optimizer Comparison: Loss')
+    plt.xlabel('Epochs')
+    plt.ylabel('Loss')
+    plt.legend()
+    plt.show()
+
+# Plot learning rate per epoch
+def plot_learning_rate(learning_rates_sgd, learning_rates_adam):
+    epochs = range(1, len(learning_rates_sgd) + 1)
+
+    plt.figure(figsize=(10, 5))
+    plt.plot(epochs, learning_rates_sgd, label='SGD Learning Rate')
+    plt.plot(epochs, learning_rates_adam, label='Adam Learning Rate')
+    plt.title('Learning Rate per Epoch')
+    plt.xlabel('Epochs')
+    plt.ylabel('Learning Rate')
+    plt.legend()
+    plt.show()
+
+# Custom callback to track learning rates
+class LearningRateTracker(tf.keras.callbacks.Callback):
+    def __init__(self):
+        super(LearningRateTracker, self).__init__()
+        self.learning_rates = []
+
+    def on_epoch_end(self, epoch, logs=None):
+        lr = self.model.optimizer.lr.numpy()  # Get the current learning rate
+        self.learning_rates.append(lr)
+
+# Print confusion matrix
+def print_confusion_matrix(y_true, y_pred, class_names):
+    cm = confusion_matrix(y_true, y_pred)
+    plt.figure(figsize=(8, 6))
+    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=class_names, yticklabels=class_names)
+    plt.title('Confusion Matrix')
+    plt.xlabel('Predicted')
+    plt.ylabel('True')
+    plt.show()
+    
+    print("\nConfusion Matrix Interpretation:")
+    print(f"True Positives: {cm[1][1]}, False Positives: {cm[0][1]}")
+    print(f"False Negatives: {cm[1][0]}, True Negatives: {cm[0][0]}")
+
+# Train and evaluate the model with different optimizers and learning rates
+def evaluate_model(X, y):
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+    optimizers = {'Adam': tf.keras.optimizers.Adam, 'SGD': tf.keras.optimizers.SGD}
+    
+    # Learning Rate Scheduler: Reduce LR when validation loss plateaus
+    reduce_lr = tf.keras.callbacks.ReduceLROnPlateau(
+        monitor='val_loss', 
+        factor=0.5, 
+        patience=2, 
+        min_lr=0.00001, 
+        verbose=1
+    )
+    
+    # Store the histories for comparison
+    best_f1 = 0
+    best_history = None
+    best_model = None
+    best_optimizer_name = None
+    sgd_history = None
+    adam_history = None
+    sgd_lr_tracker = LearningRateTracker()
+    adam_lr_tracker = LearningRateTracker()
+
+    for optimizer_name, optimizer in optimizers.items():
+        print(f"Training with {optimizer_name} (initial learning rate = 0.001)")
+        model = build_model(input_shape=(X_train.shape[1],), optimizer=optimizer(learning_rate=0.001))
+        
+        # Attach the corresponding learning rate tracker
+        lr_tracker = sgd_lr_tracker if optimizer_name == 'SGD' else adam_lr_tracker
+
+        history = model.fit(X_train, y_train, epochs=16, batch_size=32, validation_split=0.2, verbose=2, callbacks=[reduce_lr, lr_tracker])
+
+        # Evaluate on the test set
+        y_pred = np.argmax(model.predict(X_test), axis=1)
+        y_test_labels = np.argmax(y_test, axis=1)
+
+        f1 = f1_score(y_test_labels, y_pred, average='weighted')
+        print(f"F1-score: {f1:.4f}")
+        
+        # Save best model based on F1 score
+        if f1 > best_f1:
+            best_f1 = f1
+            best_history = history
+            best_model = model
+            best_optimizer_name = optimizer_name
+        
+        # Store the history for optimizer comparison
+        if optimizer_name == 'SGD':
+            sgd_history = history
+        if optimizer_name == 'Adam':
+            adam_history = history
+
+    print(f"\nBest Model: {best_optimizer_name} with F1 score: {best_f1:.4f}")
+    
+    # Plot comparison between SGD and Adam
+    plot_comparison(sgd_history, adam_history)
+
+    # Plot learning rate evolution for both optimizers
+    plot_learning_rate(sgd_lr_tracker.learning_rates, adam_lr_tracker.learning_rates)
+    
+    # Confusion matrix and classification report for best model
+    y_pred_best = np.argmax(best_model.predict(X_test), axis=1)
+    print_confusion_matrix(np.argmax(y_test, axis=1), y_pred_best, ['Injured', 'Not Injured', 'Unknown'])
+    
+    # Classification report
+    print("\nClassification Report:")
+    print(classification_report(np.argmax(y_test, axis=1), y_pred_best, target_names=['Injured', 'Not Injured', 'Unknown']))
+
+# Load the dataset and run the evaluation
+file_path = 'pose_landmarks.csv'  # Adjust the path to your CSV file
+X, y = load_data(file_path)
+evaluate_model(X, y)
